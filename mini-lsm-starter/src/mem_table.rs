@@ -17,13 +17,13 @@
 
 use std::ops::Bound;
 use std::path::Path;
-use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
+use std::sync::Arc;
 
 use anyhow::{Ok, Result};
 use bytes::Bytes;
+use crossbeam_skiplist::map::Entry;
 use crossbeam_skiplist::SkipMap;
-use crossbeam_skiplist::map::{Entry, Range};
 use ouroboros::self_referencing;
 
 use crate::iterators::StorageIterator;

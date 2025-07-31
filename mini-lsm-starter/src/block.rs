@@ -44,7 +44,7 @@ impl Block {
         // num_of_elements
         buf.put_u16(self.offsets.len() as u16);
 
-        return buf.into();
+        buf.into()
     }
 
     /// Decode from the data layout, transform the input `data` to a single `Block`

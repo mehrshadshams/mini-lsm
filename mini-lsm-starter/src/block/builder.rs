@@ -15,7 +15,7 @@
 #![allow(unused_variables)] // TODO(you): remove this lint after implementing this mod
 #![allow(dead_code)] // TODO(you): remove this lint after implementing this mod
 
-use bytes::{BufMut, Bytes, BytesMut};
+use bytes::BufMut;
 
 use crate::{
     block::SIZEOF_U16,
@@ -52,7 +52,7 @@ impl BlockBuilder {
     #[must_use]
     pub fn add(&mut self, key: KeySlice, value: &[u8]) -> bool {
         assert!(!key.is_empty(), "key must not be empty");
-        let size = key.len() + value.len() + SIZEOF_U16 * 3;
+        let size = key.len() + value.len() + SIZEOF_U16 /*  */;
         if self.estimate_size() + size > self.block_size && !self.is_empty() {
             return false;
         }
