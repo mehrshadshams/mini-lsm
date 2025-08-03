@@ -23,7 +23,7 @@ use std::fs::File;
 use std::path::Path;
 use std::sync::Arc;
 
-use anyhow::{Ok, Result};
+use anyhow::{anyhow, Ok, Result};
 pub use builder::SsTableBuilder;
 use bytes::{Buf, BufMut};
 pub use iterator::SsTableIterator;
@@ -192,7 +192,7 @@ impl SsTable {
         // let bloom_filter = Bloom::decode(&raw_bloom)?;
         let raw_meta_offset = file.read(len - 4, 4)?;
         let block_meta_offset = (&raw_meta_offset[..]).get_u32() as u64;
-        let raw_meta = file.read(block_meta_offset, len - 4 - block_meta_offset)?;
+        let raw_meta = file.read(block_meta_offset, len - block_meta_offset - 4)?;
         let block_meta = BlockMeta::decode_block_meta(&raw_meta[..]);
         std::prelude::rust_2015::Ok(Self {
             file,
@@ -243,7 +243,14 @@ impl SsTable {
 
     /// Read a block from disk, with block cache. (Day 4)
     pub fn read_block_cached(&self, block_idx: usize) -> Result<Arc<Block>> {
-        unimplemented!()
+        if let Some(block_cache) = &self.block_cache {
+            let cache_key = (self.sst_id(), block_idx);
+            let block = block_cache.try_get_with(cache_key, || self.read_block(block_idx))
+                .map_err(|e| anyhow!("{}", e));
+            Ok(block?)
+        } else {
+            self.read_block(block_idx)
+        }
     }
 
     /// Find the block that may contain `key`.

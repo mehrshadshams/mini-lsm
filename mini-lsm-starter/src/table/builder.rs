@@ -58,19 +58,19 @@ impl SsTableBuilder {
     /// be helpful here)
     pub fn add(&mut self, key: KeySlice, value: &[u8]) {
         if self.first_key.is_empty() {
-            self.first_key = Vec::from(value);
+            self.first_key = key.raw_ref().to_vec();
         }
 
         if self.builder.add(key, value) {
-            self.last_key = Vec::from(value);
+            self.last_key = key.raw_ref().to_vec();
             return;
         }
 
         self.finish_block();
 
         assert!(self.builder.add(key, value));
-        self.first_key = Vec::from(value);
-        self.last_key = Vec::from(value);
+        self.first_key = key.raw_ref().to_vec();
+        self.last_key = key.raw_ref().to_vec();
     }
 
     fn finish_block(&mut self) {
