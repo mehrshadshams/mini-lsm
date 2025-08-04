@@ -65,11 +65,13 @@ impl SsTableIterator {
 
     fn seek_to_key_inner(table: &Arc<SsTable>, key: KeySlice) -> Result<(usize, BlockIterator)> {
         let mut blk_idx = table.find_block_idx(key);
-        let mut blk_iter = BlockIterator::create_and_seek_to_key(table.read_block_cached(blk_idx)?, key);
+        let mut blk_iter =
+            BlockIterator::create_and_seek_to_key(table.read_block_cached(blk_idx)?, key);
         if !blk_iter.is_valid() {
             blk_idx += 1;
             if blk_idx < table.num_of_blocks() {
-                blk_iter = BlockIterator::create_and_seek_to_key(table.read_block_cached(blk_idx)?, key);
+                blk_iter =
+                    BlockIterator::create_and_seek_to_key(table.read_block_cached(blk_idx)?, key);
             }
         }
         Ok((blk_idx, blk_iter))
@@ -111,8 +113,9 @@ impl StorageIterator for SsTableIterator {
         if !self.blk_iter.is_valid() {
             self.blk_idx += 1;
             if self.blk_idx < self.table.num_of_blocks() {
-                self.blk_iter =
-                    BlockIterator::create_and_seek_to_first(self.table.read_block_cached(self.blk_idx)?)
+                self.blk_iter = BlockIterator::create_and_seek_to_first(
+                    self.table.read_block_cached(self.blk_idx)?,
+                )
             }
         }
         Ok(())

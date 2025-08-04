@@ -23,7 +23,7 @@ use std::fs::File;
 use std::path::Path;
 use std::sync::Arc;
 
-use anyhow::{anyhow, Ok, Result};
+use anyhow::{Ok, Result, anyhow};
 pub use builder::SsTableBuilder;
 use bytes::{Buf, BufMut};
 pub use iterator::SsTableIterator;
@@ -245,7 +245,8 @@ impl SsTable {
     pub fn read_block_cached(&self, block_idx: usize) -> Result<Arc<Block>> {
         if let Some(block_cache) = &self.block_cache {
             let cache_key = (self.sst_id(), block_idx);
-            let block = block_cache.try_get_with(cache_key, || self.read_block(block_idx))
+            let block = block_cache
+                .try_get_with(cache_key, || self.read_block(block_idx))
                 .map_err(|e| anyhow!("{}", e));
             Ok(block?)
         } else {
@@ -285,5 +286,9 @@ impl SsTable {
 
     pub fn max_ts(&self) -> u64 {
         self.max_ts
+    }
+
+    pub fn contains_key(&self, key: &[u8]) -> bool {
+        self.first_key().raw_ref() <= key && self.last_key().raw_ref() >= key
     }
 }
