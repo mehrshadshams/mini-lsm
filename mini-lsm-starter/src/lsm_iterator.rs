@@ -15,18 +15,19 @@
 #![allow(unused_variables)] // TODO(you): remove this lint after implementing this mod
 #![allow(dead_code)] // TODO(you): remove this lint after implementing this mod
 
-use std::ops::Bound;
-use anyhow::{Result, bail};
-use bytes::Bytes;
+use crate::iterators::two_merge_iterator::TwoMergeIterator;
+use crate::table::SsTableIterator;
 use crate::{
     iterators::{StorageIterator, merge_iterator::MergeIterator},
     mem_table::MemTableIterator,
 };
-use crate::iterators::two_merge_iterator::TwoMergeIterator;
-use crate::table::SsTableIterator;
+use anyhow::{Result, bail};
+use bytes::Bytes;
+use std::ops::Bound;
 
 /// Represents the internal type for an LSM iterator. This type will be changed across the course for multiple times.
-type LsmIteratorInner = TwoMergeIterator<MergeIterator<MemTableIterator>, MergeIterator<SsTableIterator>>;
+type LsmIteratorInner =
+    TwoMergeIterator<MergeIterator<MemTableIterator>, MergeIterator<SsTableIterator>>;
 // type LsmIteratorInner = MergeIterator<MemTableIterator>;
 
 pub struct LsmIterator {
@@ -37,7 +38,11 @@ pub struct LsmIterator {
 
 impl LsmIterator {
     pub(crate) fn new(iter: LsmIteratorInner, end_bound: Bound<Bytes>) -> Result<Self> {
-        let mut iter = Self { inner: iter, end_bound, is_valid: true };
+        let mut iter = Self {
+            inner: iter,
+            end_bound,
+            is_valid: true,
+        };
 
         // this is required to skip deleted entries
         iter.move_to_non_delete()?;
@@ -59,14 +64,13 @@ impl LsmIterator {
         }
 
         match self.end_bound.as_ref() {
-            Bound::Included(key) => { self.is_valid = self.inner.key().raw_ref() <= key }
-            Bound::Excluded(key) => { self.is_valid = self.inner.key().raw_ref() < key }
+            Bound::Included(key) => self.is_valid = self.inner.key().raw_ref() <= key,
+            Bound::Excluded(key) => self.is_valid = self.inner.key().raw_ref() < key,
             Bound::Unbounded => {}
         }
 
         Ok(())
     }
-
 }
 
 impl StorageIterator for LsmIterator {
@@ -91,6 +95,10 @@ impl StorageIterator for LsmIterator {
         self.move_to_non_delete()?;
 
         Ok(())
+    }
+
+    fn num_active_iterators(&self) -> usize {
+        self.inner.num_active_iterators()
     }
 }
 
@@ -147,5 +155,9 @@ impl<I: StorageIterator> StorageIterator for FusedIterator<I> {
             }
         }
         Ok(())
+    }
+
+    fn num_active_iterators(&self) -> usize {
+        self.iter.num_active_iterators()
     }
 }

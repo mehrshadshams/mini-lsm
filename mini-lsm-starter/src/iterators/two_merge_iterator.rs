@@ -50,7 +50,11 @@ impl<
     }
 
     pub fn create(a: A, b: B) -> Result<Self> {
-        let mut iter = TwoMergeIterator { a, b, choose_a: false };
+        let mut iter = TwoMergeIterator {
+            a,
+            b,
+            choose_a: false,
+        };
         iter.skip_b()?;
         iter.choose_a = Self::choose_a(&iter.a, &iter.b);
 
@@ -68,8 +72,7 @@ impl<
     fn key(&self) -> Self::KeyType<'_> {
         if self.choose_a {
             self.a.key()
-        }
-        else {
+        } else {
             self.b.key()
         }
     }
@@ -77,8 +80,7 @@ impl<
     fn value(&self) -> &[u8] {
         if self.choose_a {
             self.a.value()
-        }
-        else {
+        } else {
             self.b.value()
         }
     }
@@ -86,8 +88,7 @@ impl<
     fn is_valid(&self) -> bool {
         if self.choose_a {
             self.a.is_valid()
-        }
-        else {
+        } else {
             self.b.is_valid()
         }
     }
@@ -101,5 +102,9 @@ impl<
         self.skip_b()?;
         self.choose_a = Self::choose_a(&self.a, &self.b);
         Ok(())
+    }
+
+    fn num_active_iterators(&self) -> usize {
+        self.a.num_active_iterators() + self.b.num_active_iterators()
     }
 }

@@ -16,12 +16,13 @@
 #![allow(dead_code)] // TODO(you): remove this lint after implementing this mod
 
 use std::collections::HashMap;
+use std::fs;
 use std::ops::Bound;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicUsize;
 use std::sync::Arc;
 
-use anyhow::{Ok, Result};
+use anyhow::{anyhow, Ok, Result};
 use bytes::Bytes;
 use parking_lot::{Mutex, MutexGuard, RwLock};
 
@@ -38,7 +39,7 @@ use crate::lsm_iterator::{FusedIterator, LsmIterator};
 use crate::manifest::Manifest;
 use crate::mem_table::{map_bound, MemTable};
 use crate::mvcc::LsmMvccInner;
-use crate::table::{SsTable, SsTableIterator};
+use crate::table::{SsTable, SsTableBuilder, SsTableIterator};
 
 pub type BlockCache = moka::sync::Cache<(usize, usize), Arc<Block>>;
 
@@ -173,7 +174,15 @@ impl Drop for MiniLsm {
 
 impl MiniLsm {
     pub fn close(&self) -> Result<()> {
-        unimplemented!()
+        self.compaction_notifier.send(()).ok();
+
+        let mut flush_guard = self.flush_thread.lock();
+        if let Some(thread) = flush_guard.take() {
+            thread.join()
+                .map_err(|e| { anyhow!("{:?}", e) })?;
+        }
+
+        Ok(())
     }
 
     /// Start the storage engine by either loading an existing directory or creating a new one if the directory does
@@ -327,7 +336,8 @@ impl LsmStorageInner {
         for tbl_id in snapshot.l0_sstables.iter() {
             let table = snapshot.sstables.get(tbl_id).unwrap().clone();
             if table.contains_key(_key) {
-                let it = SsTableIterator::create_and_seek_to_key(table, KeySlice::from_slice(_key))?;
+                let it =
+                    SsTableIterator::create_and_seek_to_key(table, KeySlice::from_slice(_key))?;
                 l0_iters.push(Box::new(it));
             }
         }
@@ -429,7 +439,45 @@ impl LsmStorageInner {
 
     /// Force flush the earliest-created immutable memtable to disk
     pub fn force_flush_next_imm_memtable(&self) -> Result<()> {
-        unimplemented!()
+        let _lock = self.state_lock.lock();
+
+        fs::create_dir_all(&self.path)?;
+
+        let mem_table;
+        let snapshot = {
+            let guard = self.state.read();
+            mem_table = guard.imm_memtables.last()
+                .expect("no imm memtables!")
+                .clone();
+        };
+
+        let mut sst_builder = SsTableBuilder::new(self.options.block_size);
+        mem_table.flush(&mut sst_builder)?;
+        let sst_id = mem_table.id();
+
+        let sst = sst_builder.build(sst_id, Option::Some(self.block_cache.clone()), self.path_of_sst(sst_id))?;
+
+        {
+            let mut guard = self.state.write();
+            let mut snapshot = guard.as_ref().clone();
+            let mem = snapshot.imm_memtables.pop().unwrap();
+
+            assert_eq!(mem.id(), sst_id);
+
+            snapshot.l0_sstables.insert(0, sst_id);
+            println!("flushed {}.sst with size={}", sst_id, sst.table_size());
+            snapshot.sstables.insert(sst_id, Arc::new(sst));
+
+            // Update the snapshot.
+            *guard = Arc::new(snapshot);
+        }
+
+        /*self.manifest
+            .as_ref()
+            .unwrap()
+            .add_record(&_lock, )*/
+
+        Ok(())
     }
 
     pub fn new_txn(&self) -> Result<()> {
@@ -457,19 +505,29 @@ impl LsmStorageInner {
                 let it = memtable.scan(_lower, _upper);
                 memtable_iters.push(Box::new(it));
             }
+            println!("mem: {:?}", memtable_iters.len());
             let mem_merge_it = MergeIterator::create(memtable_iters);
 
             // l0 sstable
             let mut l0_table_iter = Vec::with_capacity(snapshot.l0_sstables.len());
             for table_id in snapshot.l0_sstables.iter() {
                 let table = snapshot.sstables[table_id].clone();
-                if range_overlaps(_lower, _upper, table.first_key().as_key_slice(), table.last_key().as_key_slice()) {
+                if range_overlaps(
+                    _lower,
+                    _upper,
+                    table.first_key().as_key_slice(),
+                    table.last_key().as_key_slice(),
+                ) {
                     let iter = match _lower {
-                        Bound::Included(key) => {
-                            SsTableIterator::create_and_seek_to_key(table, KeySlice::from_slice(key))?
-                        }
+                        Bound::Included(key) => SsTableIterator::create_and_seek_to_key(
+                            table,
+                            KeySlice::from_slice(key),
+                        )?,
                         Bound::Excluded(key) => {
-                            let mut it = SsTableIterator::create_and_seek_to_key(table, KeySlice::from_slice(key))?;
+                            let mut it = SsTableIterator::create_and_seek_to_key(
+                                table,
+                                KeySlice::from_slice(key),
+                            )?;
                             if it.is_valid() && it.key().raw_ref() == key {
                                 it.next()?;
                             }
@@ -480,6 +538,7 @@ impl LsmStorageInner {
                     l0_table_iter.push(Box::new(iter));
                 }
             }
+            println!("l0: {:?}", l0_table_iter.len());
             let l0_iter = MergeIterator::create(l0_table_iter);
 
             let iter = TwoMergeIterator::create(mem_merge_it, l0_iter)?;
@@ -493,24 +552,29 @@ impl LsmStorageInner {
     }
 }
 
-fn range_overlaps(_lower: Bound<&[u8]>, _upper: Bound<&[u8]>, first_key: KeySlice, last_key: KeySlice) -> bool {
-    match _lower {
-        Bound::Included(key) if key < first_key.raw_ref() => {
-             return false;
-        },
+fn range_overlaps(
+    _lower: Bound<&[u8]>,
+    _upper: Bound<&[u8]>,
+    first_key: KeySlice,
+    last_key: KeySlice,
+) -> bool {
+    match _upper {
         Bound::Excluded(key) if key <= first_key.raw_ref() => {
+            return false;
+        }
+        Bound::Included(key) if key < first_key.raw_ref() => {
             return false;
         }
         _ => {}
     }
-    match _upper {
-        Bound::Included(key) if key > last_key.raw_ref() => {
-            return false;
-        }
+    match _lower {
         Bound::Excluded(key) if key >= last_key.raw_ref() => {
             return false;
         }
+        Bound::Included(key) if key > last_key.raw_ref() => {
+            return false;
+        }
         _ => {}
-    };
+    }
     true
 }

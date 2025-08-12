@@ -132,7 +132,16 @@ impl LsmStorageInner {
     }
 
     fn trigger_compaction(&self) -> Result<()> {
-        unimplemented!()
+        let total_imm_tables = {
+            let guard = self.state.read();
+            guard.imm_memtables.len()
+        };
+
+        if total_imm_tables >= self.options.num_memtable_limit {
+            self.force_flush_next_imm_memtable()?;
+        }
+
+        Ok(())
     }
 
     pub(crate) fn spawn_compaction_thread(
@@ -161,6 +170,7 @@ impl LsmStorageInner {
     }
 
     fn trigger_flush(&self) -> Result<()> {
+        self.force_flush_next_imm_memtable()?;
         Ok(())
     }
 
