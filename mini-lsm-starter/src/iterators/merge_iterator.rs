@@ -159,7 +159,11 @@ impl<I: 'static + for<'a> StorageIterator<KeyType<'a> = KeySlice<'a>>> StorageIt
         if let Some(it) = self.current.as_ref() {
             num_iters += it.1.num_active_iterators();
         }
-        num_iters += self.iters.iter().map(|it| it.1.num_active_iterators()).sum::<usize>();
+        num_iters += self
+            .iters
+            .iter()
+            .map(|it| it.1.num_active_iterators())
+            .sum::<usize>();
         num_iters
     }
 }

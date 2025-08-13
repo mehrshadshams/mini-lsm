@@ -12,9 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#![allow(unused_variables)] // TODO(you): remove this lint after implementing this mod
-#![allow(dead_code)] // TODO(you): remove this lint after implementing this mod
-
 use bytes::BufMut;
 
 use crate::{
@@ -52,14 +49,16 @@ impl BlockBuilder {
     #[must_use]
     pub fn add(&mut self, key: KeySlice, value: &[u8]) -> bool {
         assert!(!key.is_empty(), "key must not be empty");
-        let size = key.len() + value.len() + SIZEOF_U16;
+        let size = key.len() + value.len() + SIZEOF_U16 * 3;
         if self.estimate_size() + size > self.block_size && !self.is_empty() {
             return false;
         }
 
         self.offsets.push(self.data.len() as u16);
 
-        let overlap = 0;
+        let overlap = compute_overlap(self.first_key.as_key_slice(), key);
+        // Encode key overlap.
+        self.data.put_u16(overlap as u16);
         // Encode key length.
         self.data.put_u16((key.len() - overlap) as u16);
         // Encode key content.
@@ -95,4 +94,18 @@ impl BlockBuilder {
     fn estimate_size(&self) -> usize {
         SIZEOF_U16 + self.offsets.len() * SIZEOF_U16 + self.data.len()
     }
+}
+
+fn compute_overlap(first_key: KeySlice, key: KeySlice) -> usize {
+    let mut i = 0;
+    loop {
+        if i >= first_key.len() || i >= key.len() {
+            break;
+        }
+        if first_key.raw_ref()[i] != key.raw_ref()[i] {
+            break;
+        }
+        i += 1;
+    }
+    i
 }

@@ -19,10 +19,10 @@ use std::collections::HashMap;
 use std::fs;
 use std::ops::Bound;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::AtomicUsize;
 use std::sync::Arc;
+use std::sync::atomic::AtomicUsize;
 
-use anyhow::{anyhow, Ok, Result};
+use anyhow::{Ok, Result, anyhow};
 use bytes::Bytes;
 use parking_lot::{Mutex, MutexGuard, RwLock};
 
@@ -31,13 +31,13 @@ use crate::compact::{
     CompactionController, CompactionOptions, LeveledCompactionController, LeveledCompactionOptions,
     SimpleLeveledCompactionController, SimpleLeveledCompactionOptions, TieredCompactionController,
 };
+use crate::iterators::StorageIterator;
 use crate::iterators::merge_iterator::MergeIterator;
 use crate::iterators::two_merge_iterator::TwoMergeIterator;
-use crate::iterators::StorageIterator;
 use crate::key::KeySlice;
 use crate::lsm_iterator::{FusedIterator, LsmIterator};
 use crate::manifest::Manifest;
-use crate::mem_table::{map_bound, MemTable};
+use crate::mem_table::{MemTable, map_bound};
 use crate::mvcc::LsmMvccInner;
 use crate::table::{SsTable, SsTableBuilder, SsTableIterator};
 
@@ -178,8 +178,7 @@ impl MiniLsm {
 
         let mut flush_guard = self.flush_thread.lock();
         if let Some(thread) = flush_guard.take() {
-            thread.join()
-                .map_err(|e| { anyhow!("{:?}", e) })?;
+            thread.join().map_err(|e| anyhow!("{:?}", e))?;
         }
 
         Ok(())
@@ -332,10 +331,25 @@ impl LsmStorageInner {
             }
         }
 
+        let keep_table = |key: &[u8], table: &SsTable| {
+            if table.contains_key(key) {
+                if let Some(bloom) = &table.bloom {
+                    if bloom.may_contain(farmhash::fingerprint32(_key)) {
+                        return true;
+                    }
+                } else {
+                    return true;
+                }
+            }
+
+            return false;
+        };
+
         let mut l0_iters = Vec::with_capacity(snapshot.l0_sstables.len());
+
         for tbl_id in snapshot.l0_sstables.iter() {
             let table = snapshot.sstables.get(tbl_id).unwrap().clone();
-            if table.contains_key(_key) {
+            if keep_table(&_key, &table) {
                 let it =
                     SsTableIterator::create_and_seek_to_key(table, KeySlice::from_slice(_key))?;
                 l0_iters.push(Box::new(it));
@@ -446,7 +460,9 @@ impl LsmStorageInner {
         let mem_table;
         let snapshot = {
             let guard = self.state.read();
-            mem_table = guard.imm_memtables.last()
+            mem_table = guard
+                .imm_memtables
+                .last()
                 .expect("no imm memtables!")
                 .clone();
         };
@@ -455,7 +471,11 @@ impl LsmStorageInner {
         mem_table.flush(&mut sst_builder)?;
         let sst_id = mem_table.id();
 
-        let sst = sst_builder.build(sst_id, Option::Some(self.block_cache.clone()), self.path_of_sst(sst_id))?;
+        let sst = sst_builder.build(
+            sst_id,
+            Option::Some(self.block_cache.clone()),
+            self.path_of_sst(sst_id),
+        )?;
 
         {
             let mut guard = self.state.write();
@@ -473,9 +493,9 @@ impl LsmStorageInner {
         }
 
         /*self.manifest
-            .as_ref()
-            .unwrap()
-            .add_record(&_lock, )*/
+        .as_ref()
+        .unwrap()
+        .add_record(&_lock, )*/
 
         Ok(())
     }
